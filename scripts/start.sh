@@ -55,6 +55,14 @@ SUPERVISOR_PORT="$(setting SUPERVISOR_PORT 4500)"
 # docs/configuration.md tells people to rely on. Read from the environment alone, `false` in `.env`
 # was ignored: the supervisor was still started and the server still told to use it.
 ONE_COMPUTER_EACH="$(setting OPENBOT_ONE_COMPUTER_EACH true)"
+# A Claude plan (scripts/setup-claude-plan.sh): the Claude Agent SDK harness is the Bot, and the
+# built-in Bots answer through it, so the key-only sample Bots are neither started nor waited for.
+PICKED_HARNESS_IMAGE="$(setting PICKED_HARNESS_IMAGE "")"
+PICKED_HARNESS_PORT="$(setting PICKED_HARNESS_PORT 4212)"
+CLAUDE_PLAN=false
+if [ -n "$(setting CLAUDE_CODE_OAUTH_TOKEN "")" ] && [ -n "$PICKED_HARNESS_IMAGE" ]; then
+  CLAUDE_PLAN=true
+fi
 export APP_PORT SERVER_PORT
 SUPERVISOR_TOKEN="$(setting SUPERVISOR_TOKEN openbot-dev-supervisor-token)"
 COMPUTER_TOKEN="$(setting COMPUTER_TOKEN openbot-dev-computer-token)"
@@ -81,6 +89,10 @@ WORKER_SHARED_SECRET="$(setting WORKER_SHARED_SECRET openbot-dev-worker-secret)"
 # this default stays in the script rather than in .env: a `docker run --env-file .env` must not
 # inherit a URL that points at a process the image does not contain.
 MANAGED_AGENT_AG_UI_URL="$(setting MANAGED_AGENT_AG_UI_URL "http://localhost:${LANGGRAPH_PORT}/ag-ui")"
+# No agent-langgraph runs on a plan, so there is nothing to point at; empty, as the desktop app writes it.
+if [ "$CLAUDE_PLAN" = "true" ]; then
+  MANAGED_AGENT_AG_UI_URL=""
+fi
 export MANAGED_AGENT_AG_UI_URL
 
 # Whether this run minted a secret that something already running may not have.
@@ -244,12 +256,17 @@ fi
 SERVICES+=(agent-computer)
 # The managed coworker uses LangGraph. The separate legacy sample only accepts OpenAI keys,
 # so requiring it would prevent an Anthropic-only deployment from reaching its managed Bot.
-if [ "$BOT_PROVIDER" = "anthropic" ]; then
+COMPOSE=(docker compose)
+if [ "$CLAUDE_PLAN" = "true" ]; then
+  info "  Claude plan: agent-harness ($PICKED_HARNESS_IMAGE) instead of agent-bot and agent-langgraph"
+  COMPOSE+=(--profile harness)
+  SERVICES+=(agent-harness)
+elif [ "$BOT_PROVIDER" = "anthropic" ]; then
   info "  agent-bot: skipped for Anthropic (OpenAI-only sample)"
+  SERVICES+=(agent-langgraph)
 else
-  SERVICES+=(agent-bot)
+  SERVICES+=(agent-bot agent-langgraph)
 fi
-SERVICES+=(agent-langgraph)
 
 export SUPERVISOR_TOKEN COMPUTER_TOKEN WORKER_SHARED_SECRET
 export COMPUTER_PORT BOT_PORT LANGGRAPH_PORT SUPERVISOR_PORT
@@ -258,17 +275,21 @@ export COMPUTER_PORT BOT_PORT LANGGRAPH_PORT SUPERVISOR_PORT
 # stdout, and stops with "failed to get console: provided file is not a console". An environment
 # variable rather than `--progress`, because a Compose too old to know the flag refuses it, and one
 # too old to know the variable ignores it.
-COMPOSE_PROGRESS=quiet docker compose up -d --build "${SERVICES[@]}" >/dev/null
+COMPOSE_PROGRESS=quiet "${COMPOSE[@]}" up -d --build "${SERVICES[@]}" >/dev/null
 if ! docker compose run --rm --build migrate >"$LOGS/migrate.log" 2>&1; then
   red "  Migrations did not apply. The database is not the schema this server expects."
   red "  Log: $LOGS/migrate.log"
   exit 1
 fi
 wait_for "http://localhost:$COMPUTER_PORT/health" "agent-computer"
-if [ "$BOT_PROVIDER" != "anthropic" ]; then
-  wait_for "http://localhost:$BOT_PORT/health" "agent-bot"
+if [ "$CLAUDE_PLAN" = "true" ]; then
+  wait_for "http://localhost:$PICKED_HARNESS_PORT/health" "agent-harness"
+else
+  if [ "$BOT_PROVIDER" != "anthropic" ]; then
+    wait_for "http://localhost:$BOT_PORT/health" "agent-bot"
+  fi
+  wait_for "http://localhost:$LANGGRAPH_PORT/health" "agent-langgraph"
 fi
-wait_for "http://localhost:$LANGGRAPH_PORT/health" "agent-langgraph"
 
 for table in agent_profiles agent_preferences; do
   if ! docker compose exec -T postgres \
@@ -289,7 +310,7 @@ green "  coworker tables migrated"
 # pipeline, and `set -e` then aborts the assignment before the check below could say why. The same
 # grep survives inside `setting()` only because `local v="$(...)"` takes `local`'s own exit status
 # and masks it. So: report what was resolved, and do not re-read the file.
-green "  managed coworker endpoint: $MANAGED_AGENT_AG_UI_URL"
+green "  managed coworker endpoint: ${MANAGED_AGENT_AG_UI_URL:-none (Claude plan)}"
 
 info "2/4  Server"
 require_free_or_ours "$SERVER_PORT" server

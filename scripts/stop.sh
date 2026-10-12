@@ -137,7 +137,12 @@ stop_port "$SERVER_PORT" server
 
 info "4/4  Docker"
 if docker compose ps --quiet 2>/dev/null | grep -q .; then
-  docker compose down >/dev/null 2>&1
+  # The picked harness sits behind a profile, which `down` leaves running unless it is named.
+  if grep -qE '^PICKED_HARNESS_IMAGE=.+' "$ROOT/.env" 2>/dev/null; then
+    docker compose --profile harness down >/dev/null 2>&1
+  else
+    docker compose down >/dev/null 2>&1
+  fi
   green "  compose services: stopped"
 else
   info "  compose services: not running"
