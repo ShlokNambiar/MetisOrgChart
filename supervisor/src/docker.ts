@@ -580,8 +580,11 @@ export async function ensure(
       }
     }
 
-    const settled = await inspectOwned(names);
     await waitUntilAnswering(names.container, options.readyTimeoutMs);
+    // Read after the wait, not before it. Docker Desktop publishes the host port a moment after
+    // `start` returns, so an inspect straight after starting reports none, and the server then
+    // refused a computer that was up as one that "reported no address".
+    const settled = await inspectOwned(names);
 
     return {
       botId: names.botId,
