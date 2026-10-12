@@ -418,7 +418,11 @@ bun run - "$INFO" <<'JS'
 const info = JSON.parse(process.argv[2]);
 const status = info.licenseStatus;
 const agents = Object.keys(info.agents ?? {});
-if (status !== "valid") {
+// "unknown" means CopilotKit's entitlement service could not be reached, not that the licence is bad.
+// The runtime serves Bots either way, so a lookup outage warns instead of keeping the app down.
+if (status === "unknown") {
+  console.log("\x1b[33m  licence 'unknown': CopilotKit's licence service did not answer. Bots still run; starting anyway.\x1b[0m");
+} else if (status !== "valid") {
   console.log(`\x1b[31m  licence is '${status}', not 'valid'.\x1b[0m`);
   console.log("\x1b[31m  Check INTELLIGENCE_API_KEY: npx copilotkit@latest login && npx copilotkit@latest project select\x1b[0m");
   console.log("\x1b[31m  See README.md for Intelligence setup.\x1b[0m");
@@ -428,7 +432,7 @@ if (agents.length === 0) {
   console.log("\x1b[31m  No Bots registered.\x1b[0m");
   process.exit(1);
 }
-console.log(`\x1b[32m  licence valid · mode ${info.mode} · Bots: ${agents.join(", ")}\x1b[0m`);
+console.log(`\x1b[32m  licence ${status} · mode ${info.mode} · Bots: ${agents.join(", ")}\x1b[0m`);
 JS
 
 info "4/4  App"
