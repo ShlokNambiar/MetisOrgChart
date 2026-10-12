@@ -73,6 +73,41 @@ def test_model_mode_disables_native_and_ambient_tools():
     asyncio.run(adapter.shutdown())
 
 
+def test_model_history_names_tool_calls_as_the_model_sees_them():
+    # Claude is offered mcp__ag_ui__<name>. History that showed the bare server name taught
+    # it to call "mcp__parallel__web_search", which the stream reported as "web_search".
+    request = RunAgentInput.model_validate(
+        {
+            "threadId": "channel",
+            "runId": "run",
+            "state": None,
+            "tools": [],
+            "context": [],
+            "forwardedProps": {},
+            "messages": [
+                {
+                    "id": "call",
+                    "role": "assistant",
+                    "toolCalls": [
+                        {
+                            "id": "t1",
+                            "type": "function",
+                            "function": {
+                                "name": "mcp__parallel__web_search",
+                                "arguments": "{}",
+                            },
+                        }
+                    ],
+                },
+                {"id": "now", "role": "user", "content": "Again"},
+            ],
+        }
+    )
+    text = "".join(part.get("text", "") for part in conversation_content(request.messages))
+    assert '"name": "mcp__ag_ui__mcp__parallel__web_search"' in text
+    assert '"name": "mcp__parallel__web_search"' not in text
+
+
 def test_model_history_keeps_role_labels_and_real_image_blocks():
     request = RunAgentInput.model_validate(
         {

@@ -25,6 +25,10 @@ def conversation_content(messages):
         if message.role == "system":
             continue  # The server supplies authoritative instructions in context.
         data = message.model_dump(by_alias=True, exclude_none=True)
+        # Past calls carry the name the model is offered (mcp__ag_ui__<name>). Shown the bare
+        # name, it copies it, and the call reaches the server stripped to an unoffered tool.
+        for call in data.get("toolCalls", []):
+            call["function"]["name"] = f"mcp__ag_ui__{call['function']['name']}"
         parts = data.pop("content", "")
         if isinstance(parts, str):
             content.append(
